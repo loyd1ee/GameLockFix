@@ -19,8 +19,8 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage;
 public class MainHook implements IXposedHookLoadPackage {
     private static final String TAG = "GameLockFix";
     private static final String KEY = "ax_gaming_gesture_lock";
-    private static final int DISABLE_EXPAND = 0x00010000;
-    private static final int DISABLE2_QUICK_SETTINGS = 1;
+    private static final int DISABLE_EXPAND = 0x00010000 | 0x00020000 | 0x00100000 | 0x00800000;
+    private static final int DISABLE2_QUICK_SETTINGS = 1 | (1 << 1);
     private static final int DISABLE2_NOTIFICATION_SHADE = 1 << 2;
     private static final int USER_CURRENT = -2;
     private static final int USER_ALL = -1;
