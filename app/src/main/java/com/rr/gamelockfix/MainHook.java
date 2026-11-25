@@ -9,6 +9,11 @@ import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
 import android.util.Log;
+import android.view.View;
+
+import java.lang.ref.WeakReference;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import de.robv.android.xposed.IXposedHookLoadPackage;
 import de.robv.android.xposed.XC_MethodHook;
@@ -25,6 +30,8 @@ public class MainHook implements IXposedHookLoadPackage {
     private static final int USER_CURRENT = -2;
     private static final int USER_ALL = -1;
     private static boolean installed;
+    private static volatile boolean sLocked;
+    private static final List<WeakReference<View>> sViews = new CopyOnWriteArrayList<>();
 
     private static void log(String m) {
         Log.i(TAG, m);
@@ -33,8 +40,25 @@ public class MainHook implements IXposedHookLoadPackage {
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lp) {
-        log("loaded in " + lp.packageName + " / " + lp.processName);
         if (!"com.android.systemui".equals(lp.packageName)) return;
+        log("loaded in " + lp.packageName);
+
+        try {
+            XposedHelpers.findAndHookMethod(
+                    "com.android.systemui.statusbar.window.StatusBarWindowView",
+                    lp.classLoader, "onAttachedToWindow", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            View v = (View) param.thisObject;
+                            sViews.add(new WeakReference<>(v));
+                            setHidden(v, sLocked);
+                            log("status bar window attached");
+                        }
+                    });
+        } catch (Throwable t) {
+            log("window hook failed: " + t);
+        }
+
         try {
             Class<?> at = XposedHelpers.findClass("android.app.ActivityThread", null);
             Object cur = XposedHelpers.callStaticMethod(at, "currentApplication");
@@ -50,6 +74,15 @@ public class MainHook implements IXposedHookLoadPackage {
             protected void afterHookedMethod(MethodHookParam param) {
                 Application app = (Application) param.thisObject;
                 if ("com.android.systemui".equals(app.getPackageName())) installOnce(app);
+            }
+        });
+    }
+
+    private static void setHidden(final View v, final boolean hidden) {
+        v.post(new Runnable() {
+            @Override
+            public void run() {
+                v.setAlpha(hidden ? 0f : 1f);
             }
         });
     }
@@ -99,6 +132,11 @@ public class MainHook implements IXposedHookLoadPackage {
     }
 
     private void apply(Context ctx, boolean locked) {
+        sLocked = locked;
+        for (WeakReference<View> ref : sViews) {
+            View v = ref.get();
+            if (v == null) sViews.remove(ref); else setHidden(v, locked);
+        }
         try {
             Object sbm = ctx.getSystemService("statusbar");
             if (sbm == null) { log("no statusbar service"); return; }
