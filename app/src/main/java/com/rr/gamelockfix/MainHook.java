@@ -46,7 +46,8 @@ public class MainHook extends XposedModule {
         l("loaded in " + SYSTEMUI);
 
         ClassLoader cl = param.getClassLoader();
-                try {
+
+        try {
             Class<?> nc = cl.loadClass("com.android.systemui.navigationbar.views.NavigationBarView");
             hook(nc.getDeclaredMethod("onAttachedToWindow")).intercept(chain -> {
                 Object r = chain.proceed();
@@ -67,7 +68,12 @@ public class MainHook extends XposedModule {
             });
         } catch (Throwable t) {
             l("nav bar hook failed: " + t);
-                }
+        }
+
+        hookReapply(cl, "com.android.systemui.navigationbar.views.NavigationBar",
+                "repositionNavigationBar");
+        hookReapply(cl, "com.android.systemui.navigationbar.views.NavigationBarView",
+                "onConfigurationChanged", "setSlippery");
 
         try {
             Class<?> c = cl.loadClass("com.android.systemui.statusbar.window.StatusBarWindowView");
@@ -119,8 +125,8 @@ public class MainHook extends XposedModule {
         } catch (Throwable ignored) { }
     }
 
-        private static final java.util.Set<View> sTouchBlocked =
-            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<View, Boolean>());
+    private static final java.util.Map<View, Boolean> sOrigNotTouchable =
+            new java.util.WeakHashMap<View, Boolean>();
 
     private static void setHidden(final View v, final boolean hidden) {
         v.post(new Runnable() {
@@ -133,25 +139,54 @@ public class MainHook extends XposedModule {
                     android.view.WindowManager.LayoutParams wl =
                             (android.view.WindowManager.LayoutParams) lp;
                     int flag = android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
-                    boolean changed = false;
-                    if (hidden && !sTouchBlocked.contains(v) && (wl.flags & flag) == 0) {
-                        wl.flags |= flag;
-                        sTouchBlocked.add(v);
-                        changed = true;
-                    } else if (!hidden && sTouchBlocked.contains(v)) {
-                        wl.flags &= ~flag;
-                        sTouchBlocked.remove(v);
-                        changed = true;
+                    boolean orig;
+                    synchronized (sOrigNotTouchable) {
+                        Boolean o = sOrigNotTouchable.get(v);
+                        if (o == null) {
+                            o = (wl.flags & flag) != 0;
+                            sOrigNotTouchable.put(v, o);
+                        }
+                        orig = o;
                     }
-                    if (changed) {
+                    int newFlags = (hidden || orig) ? (wl.flags | flag) : (wl.flags & ~flag);
+                    float newAlpha = hidden ? 0f : 1f;
+                    if (newFlags != wl.flags || wl.alpha != newAlpha) {
+                        wl.flags = newFlags;
+                        wl.alpha = newAlpha;
                         ((android.view.ViewManager) v.getContext().getSystemService("window"))
                                 .updateViewLayout(v, wl);
                     }
                 } catch (Throwable t) {
-                    Log.w(TAG, "touch toggle failed: " + t);
+                    Log.w(TAG, "window toggle failed: " + t);
                 }
             }
         });
+    }
+
+    private static void reapply() {
+        for (WeakReference<View> ref : sViews) {
+            View v = ref.get();
+            if (v != null) setHidden(v, true);
+        }
+    }
+
+    private void hookReapply(ClassLoader cl, String cls, String... names) {
+        try {
+            Class<?> c = cl.loadClass(cls);
+            for (Method m : c.getDeclaredMethods()) {
+                for (String n : names) {
+                    if (m.getName().equals(n)) {
+                        hook(m).intercept(chain -> {
+                            Object r = chain.proceed();
+                            if (sLocked) reapply();
+                            return r;
+                        });
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            l("reapply hook failed for " + cls + ": " + t);
+        }
     }
 
     private void installOnce(Application app) {
@@ -200,21 +235,4 @@ public class MainHook extends XposedModule {
     }
 
     private void apply(Context ctx, boolean locked) {
-        sLocked = locked;
-        for (WeakReference<View> ref : sViews) {
-            View v = ref.get();
-            if (v == null) sViews.remove(ref); else setHidden(v, locked);
-        }
-        try {
-            Object sbm = ctx.getSystemService("statusbar");
-            if (sbm == null) { l("no statusbar service"); return; }
-            Class<?> k = sbm.getClass();
-            k.getMethod("disable", int.class).invoke(sbm, locked ? DISABLE_EXPAND : 0);
-            k.getMethod("disable2", int.class).invoke(sbm,
-                    locked ? (DISABLE2_NOTIFICATION_SHADE | DISABLE2_QUICK_SETTINGS) : 0);
-            l("status bar " + (locked ? "LOCKED" : "unlocked"));
-        } catch (Throwable t) {
-            l("apply failed: " + t);
-        }
-    }
-}
+        sLocked = lock
