@@ -234,5 +234,22 @@ public class MainHook extends XposedModule {
         }
     }
 
-    private void apply(Context ctx, boolean locked) {
-        sLocked = lock
+        private void apply(Context ctx, boolean locked) {
+        sLocked = locked;
+        for (WeakReference<View> ref : sViews) {
+            View v = ref.get();
+            if (v == null) sViews.remove(ref); else setHidden(v, locked);
+        }
+        try {
+            Object sbm = ctx.getSystemService("statusbar");
+            if (sbm == null) { l("no statusbar service"); return; }
+            Class<?> k = sbm.getClass();
+            k.getMethod("disable", int.class).invoke(sbm, locked ? DISABLE_EXPAND : 0);
+            k.getMethod("disable2", int.class).invoke(sbm,
+                    locked ? (DISABLE2_NOTIFICATION_SHADE | DISABLE2_QUICK_SETTINGS) : 0);
+            l("status bar " + (locked ? "LOCKED" : "unlocked"));
+        } catch (Throwable t) {
+            l("apply failed: " + t);
+        }
+    }
+}
