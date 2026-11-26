@@ -119,11 +119,37 @@ public class MainHook extends XposedModule {
         } catch (Throwable ignored) { }
     }
 
+        private static final java.util.Set<View> sTouchBlocked =
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<View, Boolean>());
+
     private static void setHidden(final View v, final boolean hidden) {
         v.post(new Runnable() {
             @Override
             public void run() {
                 v.setAlpha(hidden ? 0f : 1f);
+                try {
+                    Object lp = v.getLayoutParams();
+                    if (!(lp instanceof android.view.WindowManager.LayoutParams)) return;
+                    android.view.WindowManager.LayoutParams wl =
+                            (android.view.WindowManager.LayoutParams) lp;
+                    int flag = android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+                    boolean changed = false;
+                    if (hidden && !sTouchBlocked.contains(v) && (wl.flags & flag) == 0) {
+                        wl.flags |= flag;
+                        sTouchBlocked.add(v);
+                        changed = true;
+                    } else if (!hidden && sTouchBlocked.contains(v)) {
+                        wl.flags &= ~flag;
+                        sTouchBlocked.remove(v);
+                        changed = true;
+                    }
+                    if (changed) {
+                        ((android.view.ViewManager) v.getContext().getSystemService("window"))
+                                .updateViewLayout(v, wl);
+                    }
+                } catch (Throwable t) {
+                    Log.w(TAG, "touch toggle failed: " + t);
+                }
             }
         });
     }
