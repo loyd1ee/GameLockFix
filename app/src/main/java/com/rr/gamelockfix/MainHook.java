@@ -46,6 +46,28 @@ public class MainHook extends XposedModule {
         l("loaded in " + SYSTEMUI);
 
         ClassLoader cl = param.getClassLoader();
+                try {
+            Class<?> nc = cl.loadClass("com.android.systemui.navigationbar.views.NavigationBarView");
+            hook(nc.getDeclaredMethod("onAttachedToWindow")).intercept(chain -> {
+                Object r = chain.proceed();
+                Object o = chain.getThisObject();
+                if (o instanceof View) {
+                    View v = (View) o;
+                    sViews.add(new WeakReference<>(v));
+                    setHidden(v, sLocked);
+                    Object p = v.getParent();
+                    if (p instanceof View
+                            && p.getClass().getName().endsWith("NavigationBarFrame")) {
+                        sViews.add(new WeakReference<>((View) p));
+                        setHidden((View) p, sLocked);
+                    }
+                    l("nav bar attached");
+                }
+                return r;
+            });
+        } catch (Throwable t) {
+            l("nav bar hook failed: " + t);
+                }
 
         try {
             Class<?> c = cl.loadClass("com.android.systemui.statusbar.window.StatusBarWindowView");
